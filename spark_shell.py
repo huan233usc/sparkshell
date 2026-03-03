@@ -1375,6 +1375,63 @@ class SparkShell:
         except requests.exceptions.RequestException as e:
             raise RuntimeError(f"Failed to get server info: {str(e)}")
     
+    def run_scala(self, code: str, extra_configs: Optional[dict] = None,
+                  timeout: int = 600, driver_memory: str = "4g") -> Tuple[str, str, int]:
+        """
+        Execute Scala code via spark-shell using the assembly JAR.
+        Does NOT require the REST server -- only needs setup() + build().
+
+        Returns (stdout, stderr, returncode).
+        """
+        if not self.jar_path or not self.jar_path.exists():
+            raise RuntimeError("Assembly JAR not found. Call setup() + build() first.")
+
+        java_home = os.environ.get("JAVA_HOME", "/usr/lib/jvm/java-17-openjdk-amd64")
+        java_cmd = os.path.join(java_home, "bin", "java")
+        os.makedirs("/tmp/spark-local", exist_ok=True)
+
+        cmd = [
+            java_cmd, "-cp", str(self.jar_path),
+            "org.apache.spark.deploy.SparkSubmit",
+            "--master", "local[*]",
+            "--driver-memory", driver_memory,
+            "--conf", "spark.local.dir=/tmp/spark-local",
+            "--conf", "spark.ui.enabled=false",
+            "--conf", "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension",
+            "--conf", "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog",
+        ]
+
+        if self.uc_config and self.uc_config.uri:
+            cat = self.uc_config.catalog
+            cmd += [
+                "--conf", f"spark.sql.catalog.{cat}=io.unitycatalog.spark.UCSingleCatalog",
+                "--conf", f"spark.sql.catalog.{cat}.uri={self.uc_config.uri}",
+                "--conf", f"spark.sql.catalog.{cat}.token={self.uc_config.token}",
+                "--conf", f"spark.sql.defaultCatalog={cat}",
+            ]
+
+        for k, v in self.spark_config.configs.items():
+            cmd += ["--conf", f"{k}={v}"]
+        if extra_configs:
+            for k, v in extra_configs.items():
+                cmd += ["--conf", f"{k}={v}"]
+
+        cmd += ["--class", "org.apache.spark.repl.Main", "spark-shell"]
+
+        env = os.environ.copy()
+        env["LOCAL_DIRS"] = "/tmp/spark-local"
+        env["SPARK_LOCAL_DIRS"] = "/tmp/spark-local"
+
+        self._debug("run_scala: launching spark-shell")
+        result = subprocess.run(
+            cmd,
+            input=code.strip() + "\n:quit\n",
+            capture_output=True, text=True,
+            env=env, timeout=timeout,
+            cwd=str(self.work_dir) if self.work_dir else None,
+        )
+        return result.stdout, result.stderr, result.returncode
+
     def shutdown(self):
         """Shutdown the server gracefully."""
         self._debug("shutdown() called, process is", "None" if self.process is None else "running")
