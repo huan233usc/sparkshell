@@ -515,10 +515,10 @@ class SparkShell:
         cross_spark = (delta_dir / "project" / "CrossSparkVersions.scala").exists()
         self._debug("  spark_version=", spark_version, "cross_spark (CrossSparkVersions)=", cross_spark)
         if cross_spark:
-            sbt_args = [str(sbt_script), f"-DsparkVersion={spark_version}", "clean", "runOnlyForReleasableSparkModules publishM2"]
-            self._debug("  using CrossSparkVersions command: runOnlyForReleasableSparkModules publishM2")
+            sbt_args = [str(sbt_script), f"-DsparkVersion={spark_version}", "-DskipSparkSuffix=true", "clean", "runOnlyForReleasableSparkModules publishM2"]
+            self._debug("  using CrossSparkVersions command: -DskipSparkSuffix=true runOnlyForReleasableSparkModules publishM2")
             if self.op_config.verbose:
-                print(f"[SparkShell] Building Delta (CrossSparkVersions) with -DsparkVersion={spark_version} runOnlyForReleasableSparkModules publishM2")
+                print(f"[SparkShell] Building Delta (CrossSparkVersions) with -DsparkVersion={spark_version} -DskipSparkSuffix=true runOnlyForReleasableSparkModules publishM2")
         else:
             sbt_args = [str(sbt_script), f"-DsparkVersion={spark_version}", "clean", "package", "publishM2"]
             self._debug("  using standard command: clean package publishM2")
@@ -1041,7 +1041,7 @@ class SparkShell:
         # Always print version information (not just in verbose mode)
         print(f"[SparkShell] ========================================")
         print(f"[SparkShell] Build Configuration:")
-        print(f"[SparkShell]   Spark:  4.0.0")
+        print(f"[SparkShell]   Spark:  4.0.1")
         if self.delta_config.source_dir:
             print(f"[SparkShell]   Delta:  {delta_version} (source mode: local_dir)")
             print(f"[SparkShell]           path: {Path(self.delta_config.source_dir).expanduser().resolve()}")
@@ -1065,10 +1065,16 @@ class SparkShell:
         # Make sbt executable
         os.chmod(sbt_script, 0o755)
 
-        # Create environment variables for SBT
+        # Create environment variables for SBT.
+        # When Delta was built with -DskipSparkSuffix=true (CrossSparkVersions path),
+        # artifacts are published without the Spark version suffix (e.g. delta-spark_2.13
+        # instead of delta-spark_4.0_2.13). Pass empty DELTA_SPARK_VERSION so SparkShell's
+        # build.sbt resolves the unsuffixed artifact name.
+        cross_spark = (delta_dir / "project" / "CrossSparkVersions.scala").exists()
+        delta_spark_version_env = "" if cross_spark else self.delta_config.spark_version
         build_env = {
             "DELTA_VERSION": delta_version,
-            "DELTA_SPARK_VERSION": self.delta_config.spark_version,
+            "DELTA_SPARK_VERSION": delta_spark_version_env,
             "DELTA_USE_LOCAL": "true",
             "UC_USE_LOCAL": "true"
         }
@@ -1076,7 +1082,7 @@ class SparkShell:
             "build: SparkShell sbt env: DELTA_VERSION=",
             delta_version,
             "DELTA_SPARK_VERSION=",
-            self.delta_config.spark_version,
+            delta_spark_version_env,
             "DELTA_USE_LOCAL=true UC_USE_LOCAL=true")
         self._debug("build: running sbt assembly from work_dir=", self.work_dir)
 
@@ -1176,6 +1182,14 @@ class SparkShell:
         if self.op_config.verbose:
             print(f"[SparkShell] Running: {' '.join(cmd)}")
 
+        # Override local dir env vars to avoid /local_disk0 permission errors on
+        # managed clusters (Databricks, YARN, etc.) where the cluster manager sets
+        # LOCAL_DIRS/SPARK_LOCAL_DIRS to a path the SparkShell process cannot write to.
+        server_env = os.environ.copy()
+        os.makedirs("/tmp/spark-local", exist_ok=True)
+        server_env["LOCAL_DIRS"] = "/tmp/spark-local"
+        server_env["SPARK_LOCAL_DIRS"] = "/tmp/spark-local"
+
         # Always write to log file for diagnostics, but also show in verbose mode
         with open(log_file, "w") as log:
             if self.op_config.verbose:
@@ -1187,6 +1201,7 @@ class SparkShell:
                     stderr=subprocess.STDOUT,
                     text=True,
                     bufsize=1,
+                    env=server_env,
                     preexec_fn=os.setsid if sys.platform != "win32" else None
                 )
             else:
@@ -1196,6 +1211,7 @@ class SparkShell:
                     cwd=self.work_dir,
                     stdout=log,
                     stderr=subprocess.STDOUT,
+                    env=server_env,
                     preexec_fn=os.setsid if sys.platform != "win32" else None
                 )
 
@@ -1379,6 +1395,63 @@ class SparkShell:
         except requests.exceptions.RequestException as e:
             raise RuntimeError(f"Failed to get server info: {str(e)}")
     
+    def run_scala(self, code: str, extra_configs: Optional[dict] = None,
+                  timeout: int = 600, driver_memory: str = "4g") -> Tuple[str, str, int]:
+        """
+        Execute Scala code via spark-shell using the assembly JAR.
+        Does NOT require the REST server -- only needs setup() + build().
+
+        Returns (stdout, stderr, returncode).
+        """
+        if not self.jar_path or not self.jar_path.exists():
+            raise RuntimeError("Assembly JAR not found. Call setup() + build() first.")
+
+        java_home = os.environ.get("JAVA_HOME", "/usr/lib/jvm/java-17-openjdk-amd64")
+        java_cmd = os.path.join(java_home, "bin", "java")
+        os.makedirs("/tmp/spark-local", exist_ok=True)
+
+        cmd = [
+            java_cmd, "-cp", str(self.jar_path),
+            "org.apache.spark.deploy.SparkSubmit",
+            "--master", "local[*]",
+            "--driver-memory", driver_memory,
+            "--conf", "spark.local.dir=/tmp/spark-local",
+            "--conf", "spark.ui.enabled=false",
+            "--conf", "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension",
+            "--conf", "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog",
+        ]
+
+        if self.uc_config and self.uc_config.uri:
+            cat = self.uc_config.catalog
+            cmd += [
+                "--conf", f"spark.sql.catalog.{cat}=io.unitycatalog.spark.UCSingleCatalog",
+                "--conf", f"spark.sql.catalog.{cat}.uri={self.uc_config.uri}",
+                "--conf", f"spark.sql.catalog.{cat}.token={self.uc_config.token}",
+                "--conf", f"spark.sql.defaultCatalog={cat}",
+            ]
+
+        for k, v in self.spark_config.configs.items():
+            cmd += ["--conf", f"{k}={v}"]
+        if extra_configs:
+            for k, v in extra_configs.items():
+                cmd += ["--conf", f"{k}={v}"]
+
+        cmd += ["--class", "org.apache.spark.repl.Main", "spark-shell"]
+
+        env = os.environ.copy()
+        env["LOCAL_DIRS"] = "/tmp/spark-local"
+        env["SPARK_LOCAL_DIRS"] = "/tmp/spark-local"
+
+        self._debug("run_scala: launching spark-shell")
+        result = subprocess.run(
+            cmd,
+            input=code.strip() + "\n:quit\n",
+            capture_output=True, text=True,
+            env=env, timeout=timeout,
+            cwd=str(self.work_dir) if self.work_dir else None,
+        )
+        return result.stdout, result.stderr, result.returncode
+
     def shutdown(self):
         """Shutdown the server gracefully."""
         self._debug("shutdown() called, process is", "None" if self.process is None else "running")
