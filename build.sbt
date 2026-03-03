@@ -11,7 +11,7 @@ val deltaSparkVersion = sys.env.getOrElse("DELTA_SPARK_VERSION", "")
 val deltaArtifactSuffix = if (deltaSparkVersion.startsWith("4.0")) Some("4.0") else None
 val deltaSparkModule = deltaArtifactSuffix.map(s => s"delta-spark_" + s).getOrElse("delta-spark")
 val deltaIcebergModule = deltaArtifactSuffix.map(s => s"delta-iceberg_" + s).getOrElse("delta-iceberg")
-val deltaSupportsIceberg = !deltaSparkVersion.startsWith("4.1") && !deltaSparkVersion.startsWith("4.2")
+val deltaSupportsIceberg = deltaSparkVersion.nonEmpty && !deltaSparkVersion.startsWith("4.1") && !deltaSparkVersion.startsWith("4.2")
 
 // Read Unity Catalog configuration from environment
 // UC_USE_LOCAL=true: use UC from Maven Local (requires building UC first: build/sbt publishLocal)
@@ -80,6 +80,11 @@ libraryDependencies ++= Seq(
 
   // Delta Lake - version configurable via DELTA_VERSION environment variable
   "io.delta" %% deltaSparkModule % deltaVersion,
+
+  // Kernel dependencies required for V2 streaming from Unity Catalog (delta-io/delta#6144)
+  "io.delta" % "delta-kernel-api" % deltaVersion,
+  "io.delta" % "delta-kernel-defaults" % deltaVersion,
+  "io.delta" % "delta-kernel-unitycatalog" % deltaVersion,
 
   // Unity Catalog
   // UC_USE_LOCAL=true: use 0.5.0-SNAPSHOT from ~/.m2 (build UC with publishLocal first)
