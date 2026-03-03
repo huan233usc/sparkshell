@@ -76,7 +76,7 @@ javaOptions ++= Seq(
 
 libraryDependencies ++= Seq(
   // Spark
-  "org.apache.spark" %% "spark-sql" % "4.0.1",
+  "org.apache.spark" %% "spark-sql" % "4.1.0",
 
   // Delta Lake - version configurable via DELTA_VERSION environment variable
   "io.delta" %% deltaSparkModule % deltaVersion,
