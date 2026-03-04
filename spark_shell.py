@@ -1391,7 +1391,7 @@ class SparkShell:
         os.makedirs("/tmp/spark-local", exist_ok=True)
 
         cmd = [
-            java_cmd, "-Dscala.usejavacp=true", "-cp", str(self.jar_path),
+            java_cmd, "-Dscala.usejavacp=true", f"-Xmx{driver_memory}", "-cp", str(self.jar_path),
             "org.apache.spark.deploy.SparkSubmit",
             "--master", "local[*]",
             "--driver-memory", driver_memory,
