@@ -1395,10 +1395,12 @@ class SparkShell:
             "org.apache.spark.deploy.SparkSubmit",
             "--master", "local[*]",
             "--driver-memory", driver_memory,
+            "--packages", "org.apache.hadoop:hadoop-aws:3.4.3",
             "--conf", "spark.local.dir=/tmp/spark-local",
             "--conf", "spark.ui.enabled=false",
             "--conf", "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension",
             "--conf", "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog",
+            "--conf", "spark.hadoop.fs.s3.impl=org.apache.hadoop.fs.s3a.S3AFileSystem",
         ]
 
         if self.uc_config and self.uc_config.uri:
