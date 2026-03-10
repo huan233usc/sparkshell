@@ -1410,6 +1410,7 @@ class SparkShell:
             cmd += [
                 "--conf", "spark.driver.host=127.0.0.1",
                 "--conf", "spark.driver.bindAddress=127.0.0.1",
+                "--conf", f"spark.executor.extraClassPath={str(self.jar_path)}",
             ]
 
         if self.uc_config and self.uc_config.uri:
