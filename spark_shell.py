@@ -1391,6 +1391,8 @@ class SparkShell:
         java_cmd = os.path.join(java_home, "bin", "java")
         os.makedirs("/tmp/spark-local", exist_ok=True)
 
+        is_local_cluster = master.startswith("local-cluster")
+
         cmd = [
             java_cmd, "-Dscala.usejavacp=true", f"-Xmx{driver_memory}", "-cp", str(self.jar_path),
             "org.apache.spark.deploy.SparkSubmit",
@@ -1403,6 +1405,12 @@ class SparkShell:
             "--conf", "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog",
             "--conf", "spark.hadoop.fs.s3.impl=org.apache.hadoop.fs.s3a.S3AFileSystem",
         ]
+
+        if is_local_cluster:
+            cmd += [
+                "--conf", "spark.driver.host=127.0.0.1",
+                "--conf", "spark.driver.bindAddress=127.0.0.1",
+            ]
 
         if self.uc_config and self.uc_config.uri:
             cat = self.uc_config.catalog
