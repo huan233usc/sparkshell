@@ -1434,14 +1434,19 @@ class SparkShell:
         env["SPARK_LOCAL_DIRS"] = "/tmp/spark-local"
 
         self._debug("run_scala: launching spark-shell")
-        result = subprocess.run(
-            cmd,
-            input=code.strip() + "\n:quit\n",
-            capture_output=True, text=True,
-            env=env, timeout=timeout,
-            cwd=str(self.work_dir) if self.work_dir else None,
-        )
-        return result.stdout, result.stderr, result.returncode
+        try:
+            result = subprocess.run(
+                cmd,
+                input=code.strip() + "\n:quit\n",
+                capture_output=True, text=True,
+                env=env, timeout=timeout,
+                cwd=str(self.work_dir) if self.work_dir else None,
+            )
+            return result.stdout, result.stderr, result.returncode
+        except subprocess.TimeoutExpired as e:
+            stdout = e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
+            stderr = e.stderr.decode() if isinstance(e.stderr, bytes) else (e.stderr or "")
+            return stdout, stderr + f"\n[TIMEOUT] Process timed out after {timeout}s", -1
 
     def shutdown(self):
         """Shutdown the server gracefully."""
