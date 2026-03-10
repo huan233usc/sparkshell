@@ -1376,7 +1376,8 @@ class SparkShell:
             raise RuntimeError(f"Failed to get server info: {str(e)}")
     
     def run_scala(self, code: str, extra_configs: Optional[dict] = None,
-                  timeout: int = 600, driver_memory: str = "4g") -> Tuple[str, str, int]:
+                  timeout: int = 600, driver_memory: str = "4g",
+                  master: str = "local[*]") -> Tuple[str, str, int]:
         """
         Execute Scala code via spark-shell using the assembly JAR.
         Does NOT require the REST server -- only needs setup() + build().
@@ -1393,7 +1394,7 @@ class SparkShell:
         cmd = [
             java_cmd, "-Dscala.usejavacp=true", f"-Xmx{driver_memory}", "-cp", str(self.jar_path),
             "org.apache.spark.deploy.SparkSubmit",
-            "--master", "local[*]",
+            "--master", master,
             "--driver-memory", driver_memory,
             "--packages", "org.apache.hadoop:hadoop-aws:3.4.3",
             "--conf", "spark.local.dir=/tmp/spark-local",
