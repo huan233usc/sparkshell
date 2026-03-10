@@ -1397,7 +1397,6 @@ class SparkShell:
             "--master", master,
             "--driver-memory", driver_memory,
             "--jars", str(self.jar_path),
-            "--packages", "org.apache.hadoop:hadoop-aws:3.4.3",
             "--conf", "spark.local.dir=/tmp/spark-local",
             "--conf", "spark.ui.enabled=false",
             "--conf", "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension",
